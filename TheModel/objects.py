@@ -19,15 +19,24 @@ from nba_api.stats.static import teams
 from nba_api.stats.endpoints import playergamelog
 from nba_api.stats.endpoints import commonplayerinfo
 from nba_api.stats.endpoints import boxscoretraditionalv2
+from nba_api.live.nba.endpoints import boxscore
 
 import sys
 import os
 from PIL import Image
 
-OMMITTED_COLUMNS = ["index", "TEAM_ABBREVIATION", "TEAM_CITY", "PLAYER_NAME", "NICKNAME", "START_POSITION", "COMMENT", "MIN"]
+
 
 class DataFormatter():
     def __init__(self):
+        self.ommitted_columns = ["index", "TEAM_ABBREVIATION", "TEAM_CITY", "PLAYER_NAME", "NICKNAME", "START_POSITION", "COMMENT", "MIN"]
+    
+    def get_box_score(self, game_id):
+        box_score = boxscoretraditionalv2.BoxScoreTraditionalV2(game_id=game_id).player_stats.get_data_frame()
+        updated_box_score = box_score.dropna(subset=["MIN"]).reset_index().drop(self.ommitted_columns, axis=1)
+        return updated_box_score
+    
+    def get_todays_games(self, game_id):
         pass
 
 class DataProcessor():
@@ -50,9 +59,8 @@ class ParlYay():
     def __init__(self):
         pass
 
-#DEPRECATED:
+#DEPRECATED: For now at least 1/22/2022
 class KeyTracker():
-    
     def __init__(self):
         # Internal elements
         # self.key_path will vary machine to machine as its private information
@@ -124,6 +132,7 @@ class KeyTracker():
 
 
 def test():
+    dataf = DataFormatter()
     #Getting NBA Data:
     player_name = "Devin Booker"
     player_season = "2021-22"
@@ -131,12 +140,10 @@ def test():
     available_seasons = commonplayerinfo.CommonPlayerInfo(player_id=player_id).available_seasons.get_data_frame()
     player_game_log = playergamelog.PlayerGameLog(player_id=player_id, season=player_season).get_data_frames()[0]
     sample_game_id = player_game_log.loc[0,"Game_ID"]
-    sample_game_box_score = boxscoretraditionalv2.BoxScoreTraditionalV2(game_id=sample_game_id).player_stats.get_data_frame()
-    #Even though MIN is ommitted from final dataframe need it here to get on the players that played
-    update_box_score = sample_game_box_score.dropna(subset=["MIN"]).reset_index().drop(OMMITTED_COLUMNS, 1)
     
     print("Player Name: {} | Player ID: {}".format(player_name, player_id))
-    print(update_box_score)
+    print("BOX SCORE\n-----------------")
+    print(dataf.get_box_score(sample_game_id))
 
 
 if __name__ == "__main__":
