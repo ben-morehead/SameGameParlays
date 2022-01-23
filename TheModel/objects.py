@@ -29,12 +29,60 @@ from PIL import Image
 
 class DataFormatter():
     def __init__(self):
+        self.game_path = "player_games.json"
         self.ommitted_columns = ["index", "TEAM_ABBREVIATION", "TEAM_CITY", "PLAYER_NAME", "NICKNAME", "START_POSITION", "COMMENT", "MIN"]
-    
+        self.player_games = self.load_game_json()
+        #DELETE PRINT
+
+    def get_player_tensor(self, player_id):
+        self.player_games = self.load_game_json()
+        if str(player_id) not in self.player_games.keys():
+            self.update_player_db(player_id)
+            self.save_game_json()
+        #Note: Goes from most recent [0] to least recent [-1]
+        player_game_ids = self.player_games[str(player_id)]
+        return player_id
+
+    def load_game_json(self):
+        with open(self.game_path) as fp:
+            ret = json.load(fp)
+        fp.close()
+        return ret
+
+    def save_game_json(self):
+        with open(self.game_path, "w+") as fp:
+            json.dump(self.player_games,fp)
+        fp.close()
+
+    def update_player_db(self, player_id):
+        all_games = self.get_player_history(player_id)
+        self.player_games[str(player_id)] = all_games
+
     def get_box_score(self, game_id):
         box_score = boxscoretraditionalv2.BoxScoreTraditionalV2(game_id=game_id).player_stats.get_data_frame()
         updated_box_score = box_score.dropna(subset=["MIN"]).reset_index().drop(self.ommitted_columns, axis=1)
         return updated_box_score
+    
+    def get_player_history(self, player_id):
+        available_seasons = list(commonplayerinfo.CommonPlayerInfo(player_id=player_id).available_seasons.get_data_frame()['SEASON_ID'])
+        first_year = int(available_seasons[0][1:])
+        last_year = int(available_seasons[-1][1:])
+        yearz = range(last_year+1, first_year, -1)
+        
+        game_id_list = []
+
+        for year in yearz:
+            next_one = str((year + 1) % 100).zfill(2)
+            season_id = "{}-{}".format(year,next_one)
+            player_game_log = playergamelog.PlayerGameLog(player_id=player_id, season=season_id).get_data_frames()[0]
+            game_id_list.extend(list(player_game_log["Game_ID"]))
+            time.sleep(0.5)
+
+        ret = game_id_list
+        return ret
+    
+    def inititalize_database(self):
+        pass
     
     def get_todays_games(self, game_id):
         pass
@@ -137,13 +185,18 @@ def test():
     player_name = "Devin Booker"
     player_season = "2021-22"
     player_id = players.find_players_by_full_name(player_name)[0]["id"]
-    available_seasons = commonplayerinfo.CommonPlayerInfo(player_id=player_id).available_seasons.get_data_frame()
-    player_game_log = playergamelog.PlayerGameLog(player_id=player_id, season=player_season).get_data_frames()[0]
-    sample_game_id = player_game_log.loc[0,"Game_ID"]
+    #available_seasons = commonplayerinfo.CommonPlayerInfo(player_id=player_id).available_seasons.get_data_frame()
+    #player_game_log = playergamelog.PlayerGameLog(player_id=player_id, season=player_season).get_data_frames()[0]
+    #sample_game_id = player_game_log.loc[0,"Game_ID"]
     
     print("Player Name: {} | Player ID: {}".format(player_name, player_id))
     print("BOX SCORE\n-----------------")
-    print(dataf.get_box_score(sample_game_id))
+    ret = dataf.get_player_tensor(player_id)
+    print(ret)
+    #print(dataf.get_box_score(sample_game_id))
+    #print("Total Games: {}".format(len(dataf.get_player_history(player_id))))
+
+
 
 
 if __name__ == "__main__":
