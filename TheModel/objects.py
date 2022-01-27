@@ -97,7 +97,8 @@ class DataFormatter():
         game_sublist = game_list[index:(index + num_games)]
         game_sublist.reverse()
 
-        #Get database data and 0-pad to ensure stackability
+
+    #Get database data and 0-pad to ensure stackability
         full_seq = []
         max_size = 0
         for game_id in game_sublist:
@@ -114,7 +115,7 @@ class DataFormatter():
         #Reshaping for datapoint purposes
         datapoint = np.stack(full_seq)
         datapoint = np.reshape(datapoint, [datapoint.shape[0], datapoint.shape[1] * datapoint.shape[2]])
-        
+
         cursor.close()
         connection.close()
 
@@ -290,6 +291,8 @@ def test():
 
     print("Player Name: {} | Player ID: {}".format(player_name, player_id))
     print("-----------------")
+    dataf.inititalize_database(player_id)
+    dataf.update_player_db(player_id)
     ret = dataf.get_player_datapoint(player_id, seq_len, most_recent=False)
     #ret = dataf.get_player_tensor(player_id)
     print(ret[0].shape, ret[1])
