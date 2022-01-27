@@ -10,7 +10,6 @@ import torchvision
 import random
 import time
 from datetime import date
-import requests
 import sqlite3
 import logging
 
@@ -78,7 +77,9 @@ class DataFormatter():
         #Determine whether grabbing random set of games or just the most recent(depending on if we want to sample currently or use dataformatting)
         if most_recent is True:
             print("Most Recent {}".format(num_games))
-            index = 0
+            index = 1 #IF GAME OF DAY IS GIVING ISSUE
+            #index = 0 #OTHERWISE
+
         else:
             print("Random {}".format(num_games))
             index=random.randint(0, len(game_list) - num_games + 1)
@@ -89,8 +90,18 @@ class DataFormatter():
         game_sublist.reverse()
 
         #Get database data
+        full_seq = []
+        max_size = 0
         for game_id in game_sublist:
-            game_df = self.get_game_from_db(cursor, game_id)
+            game_arr = self.get_game_from_db(cursor, game_id)
+            full_seq.append(game_arr)
+            if game_arr.shape[0] > max_size: max_size = game_arr.shape[0]
+        for i,score in full_seq:
+            rows_to_add = max_size - score.shape[0]
+            print(full_seq)
+        datapoint = np.stack(full_seq)
+        print(datapoint.shape)
+
         
         cursor.close()
         connection.close()
@@ -155,9 +166,11 @@ class DataFormatter():
         return ret
 
     def get_game_from_db(self, cursor, game_id):
-        get_cmd = f"SELECT * FROM {self.db_table_name} WHERE GAME_ID={game_id}"
+        get_cmd = f"SELECT * FROM {self.db_table_name} WHERE GAME_ID={game_id};"
+        print(get_cmd)
         cursor.execute(get_cmd)
         select_res = cursor.fetchall()
+        print(select_res)
         full_array = np.delete(np.array(select_res), obj=0, axis=1)
         return full_array
     
@@ -213,7 +226,7 @@ class DataFormatter():
             row_str = ", ".join(row_list)
             sql_cmd = f"INSERT INTO {self.db_table_name} ({field_string}) VALUES ({row_str});"
             cursor.execute(sql_cmd)
-
+        
         return 1
 
     def get_todays_games(self, game_id):
@@ -247,7 +260,7 @@ def test():
     dataf = DataFormatter()
     #Getting NBA Data:
     player_name = "Devin Booker"
-    seq_len = 1
+    seq_len = 5
     player_season = "2021-22"
     player_id = players.find_players_by_full_name(player_name)[0]["id"]
     #available_seasons = commonplayerinfo.CommonPlayerInfo(player_id=player_id).available_seasons.get_data_frame()
@@ -256,6 +269,8 @@ def test():
     
     print("Player Name: {} | Player ID: {}".format(player_name, player_id))
     print("BOX SCORE\n-----------------")
+    #dataf.inititalize_database(player_id)
+    #dataf.update_player_db(player_id)
     ret = dataf.get_player_datapoint(player_id, seq_len, most_recent=True)
     #os.remove("gamedata.db")
     #ret = dataf.inititalize_database(player_id=player_id)
