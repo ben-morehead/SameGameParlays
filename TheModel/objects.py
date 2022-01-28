@@ -46,6 +46,8 @@ class DataFormatter():
         self.player_games = self.load_game_json()
         #DELETE PRINT
 
+    """EXETERNAL FILE INTERACTION : ADMIN STUFF MOSTLY"""
+    
     def setup_logger(self):
         logging.basicConfig(filename='dataformatter.log', format='%(asctime)s - %(message)s', datefmt='%m/%d/%Y %I:%M:%S', filemode='w', level=logging.INFO)
 
@@ -61,10 +63,28 @@ class DataFormatter():
             json.dump(self.player_games,fp)
         fp.close()
 
-    def get_player_datapoint(self, player_id, num_games, most_recent=False):
-        #Getting player list of all the games
+    """THE FUNCTIONAL CODE"""
+
+    def check_player_in_cache(self, player_id):
         if player_id not in self.player_games.keys():
             self.player_games[str(player_id)] = self.get_player_history(player_id)
+
+    def get_box_score(self, game_id):
+        box_score = boxscoretraditionalv2.BoxScoreTraditionalV2(game_id=game_id).player_stats.get_data_frame()
+        updated_box_score = box_score.dropna(subset=["MIN"]).reset_index().drop(self.ommitted_columns, axis=1).rename(columns={'TO': 'TOV'})
+        return updated_box_score
+
+    def get_game_from_db(self, cursor, game_id):
+        get_cmd = f"SELECT * FROM {self.db_table_name} WHERE GAME_ID={game_id};"
+        cursor.execute(get_cmd)
+        select_res = cursor.fetchall()
+        full_array = np.delete(np.array(select_res), obj=0, axis=1)
+        return full_array
+
+    def get_player_datapoint(self, player_id, num_games, most_recent=False):
+        #Getting player list of all the games
+        self.check_player_in_cache(player_id)
+
         game_list = self.player_games[str(player_id)]
         game_list = list(map(int, self.player_games[str(player_id)]))
         label = None
@@ -87,18 +107,17 @@ class DataFormatter():
             index=random.randint(0, len(game_list) - num_games + 1)
             label_game = game_list[index-1]
             cursor.execute(f"SELECT PTS FROM {self.db_table_name} WHERE GAME_ID={label_game} AND PLAYER_ID={player_id}")
-            print(label_game)
             points = cursor.fetchone()[0]
+            cursor.execute(f"SELECT * FROM (SELECT DISTINCT TEAM_ID FROM {self.db_table_name} WHERE GAME_ID={label_game}) WHERE NOT TEAM_ID=(SELECT TEAM_ID FROM {self.db_table_name} WHERE GAME_ID={label_game} AND PLAYER_ID={player_id})")
+            opposing_team = cursor.fetchone()[0]
             label_index, _ = self.points_to_label(points)
-            print("Points in Next Game: {}".format(points))
-            print("Label for Next Game Points: {}".format(label_index))
         
         #Prepare the game list for getting db data
         game_sublist = game_list[index:(index + num_games)]
         game_sublist.reverse()
 
 
-    #Get database data and 0-pad to ensure stackability
+        #Get database data and 0-pad to ensure stackability
         full_seq = []
         max_size = 0
         for game_id in game_sublist:
@@ -121,58 +140,7 @@ class DataFormatter():
 
         #Return Statement
         if most_recent: return datapoint
-        else: return datapoint, label_index
-
-    def points_to_label(self, points):
-        label = np.zeros([11])        
-        if points >= 50:
-            index = -1
-        else:
-            index = int(np.floor(points / 5))
-        label[index] = 1
-        label.astype(float)
-        return index, label
-
-    def get_player_id(self, player_name):
-        player_id = players.find_players_by_full_name(player_name)[0]["id"]
-        return player_id
-    
-    def get_player_name(self, player_id):
-        player_name = players.find_player_by_id(player_id)["full_name"]
-        return player_name
-
-    def update_player_db(self, player_id):
-        connection = sqlite3.connect('gamedata.db')
-        cursor = connection.cursor()
-
-        #Updating self.player_games if need be
-        if self.player_games["last_updated"] is not self.today:
-            all_games = self.get_player_history(player_id)
-            self.player_games[str(player_id)] = all_games
-        else:
-            all_games = self.player_games[str(player_id)]
-        
-        #insert player_id into the database
-        for game_id in all_games:
-            check_cmd = f"SELECT EXISTS(SELECT * FROM {self.db_table_name} WHERE GAME_ID={game_id});"
-            cursor.execute(check_cmd)
-            game_exists = cursor.fetchall()[0][0]
-            
-            if not game_exists:
-                box_score = self.get_box_score(game_id)
-                insert_ret = self.insert_into_db(cursor, box_score=box_score)
-                if insert_ret: connection.commit()
-                logging.info("Game Inserted into Database: {}".format(game_id))
-
-        logging.info("Player Data Added to Database: {}({})".format(self.get_player_name(player_id), player_id))
-        cursor.close()
-        connection.close()
-        return -1
-
-    def get_box_score(self, game_id):
-        box_score = boxscoretraditionalv2.BoxScoreTraditionalV2(game_id=game_id).player_stats.get_data_frame()
-        updated_box_score = box_score.dropna(subset=["MIN"]).reset_index().drop(self.ommitted_columns, axis=1).rename(columns={'TO': 'TOV'})
-        return updated_box_score
+        else: return datapoint, opposing_team, label_index
     
     def get_player_history(self, player_id):
         available_seasons = list(commonplayerinfo.CommonPlayerInfo(player_id=player_id).available_seasons.get_data_frame()['SEASON_ID'])
@@ -192,13 +160,36 @@ class DataFormatter():
         ret = game_id_list
         return ret
 
-    def get_game_from_db(self, cursor, game_id):
-        get_cmd = f"SELECT * FROM {self.db_table_name} WHERE GAME_ID={game_id};"
-        cursor.execute(get_cmd)
-        select_res = cursor.fetchall()
-        full_array = np.delete(np.array(select_res), obj=0, axis=1)
-        return full_array
+    def get_player_id(self, player_name):
+        player_id = players.find_players_by_full_name(player_name)[0]["id"]
+        return player_id
     
+    def get_player_name(self, player_id):
+        player_name = players.find_player_by_id(player_id)["full_name"]
+        return player_name
+    
+    #**************************
+    
+    def get_team_datapoint(self, team_id, num_games, most_recent=False):
+        logging.info(f"Getting datapoint for last {num_games} games of: {self.get_team_name(team_id)} ({team_id})")
+        print(f"Getting datapoint for last {num_games} games of: {self.get_team_name(team_id)} ({team_id})")
+        return team_id
+
+    #*****************************
+
+    def get_team_id(self, team_name):
+        team_id = teams.find_teams_by_full_name(team_name)[0]["id"]#players.find_players_by_full_name(player_name)[0]["id"]
+        teams.find_team
+        return team_id
+    
+    def get_team_name(self, team_id):
+        team_name = teams.find_team_name_by_id(team_id)["full_name"]#players.find_player_by_id(player_id)["full_name"]
+        return team_name
+
+    def get_todays_games(self, game_id):
+        #Will involve grabbing from the odds import
+        pass
+
     def inititalize_database(self, player_id):
         #THIS WILL BE DEPRECATED AFTER I GET THIS WHOLE SQL THING PROPER
         logging.info("Running DataFormatter.initialize_database()")
@@ -251,11 +242,45 @@ class DataFormatter():
             row_str = ", ".join(row_list)
             sql_cmd = f"INSERT INTO {self.db_table_name} ({field_string}) VALUES ({row_str});"
             cursor.execute(sql_cmd)
-        
         return 1
 
-    def get_todays_games(self, game_id):
-        pass
+    def points_to_label(self, points):
+        label = np.zeros([11])        
+        if points >= 50:
+            index = -1
+        else:
+            index = int(np.floor(points / 5))
+        label[index] = 1
+        label.astype(float)
+        return index, label
+
+    def update_player_db(self, player_id):
+        connection = sqlite3.connect('gamedata.db')
+        cursor = connection.cursor()
+
+        #Updating self.player_games if need be
+        if self.player_games["last_updated"] is not self.today:
+            all_games = self.get_player_history(player_id)
+            self.player_games[str(player_id)] = all_games
+        else:
+            all_games = self.player_games[str(player_id)]
+        
+        #insert player_id into the database
+        for game_id in all_games:
+            check_cmd = f"SELECT EXISTS(SELECT * FROM {self.db_table_name} WHERE GAME_ID={game_id});"
+            cursor.execute(check_cmd)
+            game_exists = cursor.fetchall()[0][0]
+            
+            if not game_exists:
+                box_score = self.get_box_score(game_id)
+                insert_ret = self.insert_into_db(cursor, box_score=box_score)
+                if insert_ret: connection.commit()
+                logging.info("Game Inserted into Database: {}".format(game_id))
+
+        logging.info("Player Data Added to Database: {}({})".format(self.get_player_name(player_id), player_id))
+        cursor.close()
+        connection.close()
+        return -1
 
     def __del__(self):
         self.save_game_json()
@@ -285,19 +310,23 @@ def test():
     dataf = DataFormatter()
     #Getting NBA Data:
     player_name = "Devin Booker"
+    team_name = "Los Angeles Lakers"
     seq_len = 5
     player_season = "2021-22"
+    team_id = teams.find_teams_by_full_name(team_name)[0]["id"]
     player_id = players.find_players_by_full_name(player_name)[0]["id"]
 
     print("Player Name: {} | Player ID: {}".format(player_name, player_id))
     print("-----------------")
-    dataf.inititalize_database(player_id)
-    dataf.update_player_db(player_id)
-    ret = dataf.get_player_datapoint(player_id, seq_len, most_recent=False)
+    #dataf.inititalize_database(player_id)
+    #dataf.update_player_db(player_id)
+    #ret = dataf.get_player_datapoint(player_id, seq_len, most_recent=False)
+    ret = dataf.get_team_datapoint(team_id, seq_len, most_recent=False)
     #ret = dataf.get_player_tensor(player_id)
-    print(ret[0].shape, ret[1])
+    #ret = dataf.get_player_last_opponent(player_id)
+    print(ret)
 
-
+   
 
 
 if __name__ == "__main__":
