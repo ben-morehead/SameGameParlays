@@ -1,1 +1,7 @@
-01/28/2022 09:51:24 - Getting datapoint for last 5 games of: Los Angeles Lakers (1610612747)
+01/28/2022 08:18:09 - get_team_datapoint - Getting datapoint for last 5 games of: Los Angeles Lakers (1610612747)
+01/28/2022 08:18:09 - Running check_team_in_cache
+01/28/2022 08:18:09 - Running get_game_from_db
+01/28/2022 08:18:09 - Running get_game_from_db
+01/28/2022 08:18:09 - Running get_game_from_db
+01/28/2022 08:18:09 - Running get_game_from_db
+01/28/2022 08:18:09 - Running get_game_from_db

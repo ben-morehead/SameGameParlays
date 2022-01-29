@@ -18,7 +18,9 @@ from nba_api.stats.library.parameters import Season
 from nba_api.stats.static import players
 from nba_api.stats.static import teams 
 from nba_api.stats.endpoints import playergamelog
+from nba_api.stats.endpoints import teamgamelog
 from nba_api.stats.endpoints import commonplayerinfo
+from nba_api.stats.endpoints import commonteamyears
 from nba_api.stats.endpoints import boxscoretraditionalv2
 from nba_api.live.nba.endpoints import boxscore
 
@@ -38,12 +40,14 @@ class DataFormatter():
         #Note: For RNN If the data formatting doesn't work out, we can make a self.max_size = 30 as a safety.
 
         self.today = date.today().strftime("%d/%m/%y")
-        self.game_path = "player_games.json"
+        self.player_path = "player_games.json"
+        self.team_path = "team_games.json"
         self.db_table_name = "gamedetails"
         self.ommitted_columns = ["index", "TEAM_ABBREVIATION", "TEAM_CITY", "PLAYER_NAME", "NICKNAME", "START_POSITION", "COMMENT", "MIN"]
         self.setup_logger()
         self.helper = Helper()
-        self.player_games = self.load_game_json()
+        self.player_games = self.load_game_json(self.player_path)
+        self.team_games = self.load_game_json(self.team_path)
         #DELETE PRINT
 
     """EXETERNAL FILE INTERACTION : ADMIN STUFF MOSTLY"""
@@ -51,30 +55,41 @@ class DataFormatter():
     def setup_logger(self):
         logging.basicConfig(filename='dataformatter.log', format='%(asctime)s - %(message)s', datefmt='%m/%d/%Y %I:%M:%S', filemode='w', level=logging.INFO)
 
-    def load_game_json(self):
-        with open(self.game_path) as fp:
+    def load_game_json(self, path):
+        with open(path) as fp:
             ret = json.load(fp)
         fp.close()
         return ret
 
-    def save_game_json(self):
-        self.player_games["last_updated"] = self.today
-        with open(self.game_path, "w+") as fp:
-            json.dump(self.player_games,fp)
+    def save_game_json(self, dict, path):
+        dict["last_updated"] = self.today
+        with open(path, "w+") as fp:
+            json.dump(dict,fp)
         fp.close()
 
     """THE FUNCTIONAL CODE"""
 
     def check_player_in_cache(self, player_id):
-        if player_id not in self.player_games.keys():
+        logging.info(f"Running {sys._getframe().f_code.co_name}")
+        if str(player_id) not in self.player_games.keys():
             self.player_games[str(player_id)] = self.get_player_history(player_id)
+            self.update_player_db(player_id)
+
+    def check_team_in_cache(self, team_id):
+        logging.info(f"Running {sys._getframe().f_code.co_name}")
+        if str(team_id) not in self.team_games.keys():
+            print("Team not Cached: Grabbing Team Log")
+            self.team_games[str(team_id)] = self.get_team_history(team_id)
+            self.update_team_db(team_id)
 
     def get_box_score(self, game_id):
+        logging.info(f"Running {sys._getframe().f_code.co_name}")
         box_score = boxscoretraditionalv2.BoxScoreTraditionalV2(game_id=game_id).player_stats.get_data_frame()
         updated_box_score = box_score.dropna(subset=["MIN"]).reset_index().drop(self.ommitted_columns, axis=1).rename(columns={'TO': 'TOV'})
         return updated_box_score
 
     def get_game_from_db(self, cursor, game_id):
+        logging.info(f"Running {sys._getframe().f_code.co_name}")
         get_cmd = f"SELECT * FROM {self.db_table_name} WHERE GAME_ID={game_id};"
         cursor.execute(get_cmd)
         select_res = cursor.fetchall()
@@ -82,6 +97,7 @@ class DataFormatter():
         return full_array
 
     def get_player_datapoint(self, player_id, num_games, most_recent=False):
+        logging.info(f"Running {sys._getframe().f_code.co_name}")
         #Getting player list of all the games
         self.check_player_in_cache(player_id)
 
@@ -143,6 +159,7 @@ class DataFormatter():
         else: return datapoint, opposing_team, label_index
     
     def get_player_history(self, player_id):
+        logging.info(f"{sys._getframe().f_code.co_name} - Adding game log for player {self.get_player_name(player_id)} ({player_id}) to local json db")
         available_seasons = list(commonplayerinfo.CommonPlayerInfo(player_id=player_id).available_seasons.get_data_frame()['SEASON_ID'])
         first_year = int(available_seasons[0][1:])
         last_year = int(available_seasons[-1][1:])
@@ -160,20 +177,97 @@ class DataFormatter():
         ret = game_id_list
         return ret
 
+    def get_team_history(self, team_id):
+        logging.info(f"{sys._getframe().f_code.co_name} - Adding game log for Team {self.get_team_name(team_id)} ({team_id}) to local json db")
+        available_seasons = commonteamyears.CommonTeamYears().team_years.get_data_frame()
+        #print(available_seasons)
+        for i, team in available_seasons.iterrows():
+            if team["TEAM_ID"] == team_id:
+                first_year = int(team["MIN_YEAR"])
+                last_year = int(team["MAX_YEAR"])
+        yearz = range(last_year+1, first_year, -1)
+        
+        game_id_list = []
+
+        for year in yearz:
+            next_one = str((year + 1) % 100).zfill(2)
+            season_id = "{}-{}".format(year,next_one)
+            team_game_log = teamgamelog.TeamGameLog(team_id=team_id, season=season_id).get_data_frames()[0]
+            game_id_list.extend(list(team_game_log["Game_ID"]))
+            time.sleep(0.5)
+
+        ret = game_id_list
+        return ret
+
     def get_player_id(self, player_name):
+        logging.info(f"Running {sys._getframe().f_code.co_name}")
         player_id = players.find_players_by_full_name(player_name)[0]["id"]
         return player_id
     
     def get_player_name(self, player_id):
+        logging.info(f"Running {sys._getframe().f_code.co_name}")
         player_name = players.find_player_by_id(player_id)["full_name"]
         return player_name
     
     #**************************
     
     def get_team_datapoint(self, team_id, num_games, most_recent=False):
-        logging.info(f"Getting datapoint for last {num_games} games of: {self.get_team_name(team_id)} ({team_id})")
+        logging.info(f"{sys._getframe().f_code.co_name} - Getting datapoint for last {num_games} games of: {self.get_team_name(team_id)} ({team_id})")
         print(f"Getting datapoint for last {num_games} games of: {self.get_team_name(team_id)} ({team_id})")
-        return team_id
+        #Getting player list of all the games
+        self.check_team_in_cache(team_id)
+
+        game_list = list(map(int, self.team_games[str(team_id)]))
+
+        connection = sqlite3.connect('gamedata.db')
+        cursor = connection.cursor()
+
+        #Checking to ensure there are enough games to make a datapoint
+        if len(game_list) < (num_games):
+            print("Sequence Length too Large")
+            logging.info(f"- {sys._getframe().f_code.co_name} - Sequence Length too Large")
+
+        
+
+        #Determine whether grabbing random set of games or just the most recent(depending on if we want to sample currently or use dataformatting)
+        if most_recent is True:
+            print("Most Recent {}".format(num_games))
+            #index = 1 #IF GAME OF DAY IS GIVING ISSUE
+            index = 0 #OTHERWISE
+        else:
+            print("Random {}".format(num_games))
+            index=random.randint(0, len(game_list) - num_games + 1)
+
+        
+        #Prepare the game list for getting db data
+        game_sublist = game_list[index:(index + num_games)]
+        game_sublist.reverse()
+
+
+        #Get database data and 0-pad to ensure stackability
+        full_seq = []
+        max_size = 0
+        for game_id in game_sublist:
+            game_arr = self.get_game_from_db(cursor, game_id)
+            full_seq.append(game_arr)
+            if game_arr.shape[0] > max_size: max_size = game_arr.shape[0]
+
+        for i,score in enumerate(full_seq):
+            rows_to_add = max_size - score.shape[0]
+            if rows_to_add > 0:
+                zero_arr = np.zeros([rows_to_add, score.shape[1]])
+                full_seq[i] = np.append(score, zero_arr, axis=0)
+
+        #Reshaping for datapoint purposes
+        datapoint = np.stack(full_seq)
+        datapoint = np.reshape(datapoint, [datapoint.shape[0], datapoint.shape[1] * datapoint.shape[2]])
+
+        cursor.close()
+        connection.close()
+
+        #Return Statement
+        return datapoint
+
 
     #*****************************
 
@@ -192,7 +286,7 @@ class DataFormatter():
 
     def inititalize_database(self, player_id):
         #THIS WILL BE DEPRECATED AFTER I GET THIS WHOLE SQL THING PROPER
-        logging.info("Running DataFormatter.initialize_database()")
+        logging.info(f"Running {sys._getframe().f_code.co_name}")
         sample_gameid = self.get_player_history(player_id)[0]
         sample_dataframe = self.get_box_score(sample_gameid)
         columns = list(sample_dataframe.columns)
@@ -228,7 +322,9 @@ class DataFormatter():
         ''' 
         Inserts provided box_score into db indicated by cursor. If it already is in there function returns 0, otherwise if it is added succesfull function returns 1
         '''
+        logging.info(f"Running {sys._getframe().f_code.co_name}")
         # Getting string values
+        box_score = box_score.fillna(0)
         field_string = ""
         for val in box_score.columns:
             field_string=f"{field_string}'{val}', "
@@ -260,10 +356,8 @@ class DataFormatter():
 
         #Updating self.player_games if need be
         if self.player_games["last_updated"] is not self.today:
-            all_games = self.get_player_history(player_id)
-            self.player_games[str(player_id)] = all_games
-        else:
-            all_games = self.player_games[str(player_id)]
+            self.player_games[str(player_id)] = self.get_player_history(player_id)
+        all_games = self.player_games[str(player_id)]
         
         #insert player_id into the database
         for game_id in all_games:
@@ -282,8 +376,35 @@ class DataFormatter():
         connection.close()
         return -1
 
+    def update_team_db(self, team_id):
+        connection = sqlite3.connect('gamedata.db')
+        cursor = connection.cursor()
+
+        #Updating self.player_games if need be
+        #if self.team_games["last_updated"] is not self.today:
+            #self.team_games[str(team_id)] = self.get_team_history(team_id)
+        all_games = self.team_games[str(team_id)]
+        
+        #insert player_id into the database
+        for game_id in all_games:
+            check_cmd = f"SELECT EXISTS(SELECT * FROM {self.db_table_name} WHERE GAME_ID={game_id});"
+            cursor.execute(check_cmd)
+            game_exists = cursor.fetchall()[0][0]
+            
+            if not game_exists:
+                box_score = self.get_box_score(game_id)
+                insert_ret = self.insert_into_db(cursor, box_score=box_score)
+                if insert_ret: connection.commit()
+                logging.info("Game Inserted into Database: {}".format(game_id))
+
+        logging.info("Team Data Added to Database: {}({})".format(self.get_team_name(team_id), team_id))
+        cursor.close()
+        connection.close()
+        return -1
+
     def __del__(self):
-        self.save_game_json()
+        self.save_game_json(self.team_games, self.team_path)
+        self.save_game_json(self.player_games, self.player_path)
 
 class DataProcessor():
     def __init__(self):
@@ -324,7 +445,7 @@ def test():
     ret = dataf.get_team_datapoint(team_id, seq_len, most_recent=False)
     #ret = dataf.get_player_tensor(player_id)
     #ret = dataf.get_player_last_opponent(player_id)
-    print(ret)
+    print(ret.shape)
 
    
 
